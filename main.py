@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Optional
 
 from fastapi import FastAPI, UploadFile, File, Depends, HTTPException, status
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import create_engine, Column, String, DateTime, Integer
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
@@ -87,9 +87,211 @@ class AuditService:
         db.add(entry)
         db.commit()
 
-@app.get("/")
+# UI DASHBOARD HTML (లైవ్ లింక్ ఓపెన్ చేయగానే కనిపించే వెబ్‌సైట్ డిజైన్)
+HTML_DASHBOARD = """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>TrustVault - Secure Document Sharing Platform</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="min-h-screen bg-slate-900 text-slate-100 p-6 md:p-10 font-sans">
+  <div class="max-w-5xl mx-auto space-y-6">
+    
+    <!-- Header -->
+    <div class="flex flex-col md:flex-row justify-between items-start md:items-center bg-slate-800 p-6 rounded-xl border border-slate-700 shadow-lg gap-4">
+      <div>
+        <h1 class="text-3xl font-bold tracking-tight text-blue-400 flex items-center gap-2">
+          🛡️ TrustVault
+        </h1>
+        <p class="text-slate-400 text-sm mt-1">Secure Document Sharing Platform with Immediate Revocation</p>
+      </div>
+
+      <!-- User Switcher -->
+      <div class="flex items-center gap-2 bg-slate-900 p-2 rounded-lg border border-slate-700">
+        <span class="text-xs text-slate-400 font-medium">Current User:</span>
+        <button id="btnUserA" onclick="setUser('userA')" class="px-3 py-1.5 rounded-md font-semibold text-xs transition bg-blue-600 text-white shadow">
+          userA (Owner)
+        </button>
+        <button id="btnUserB" onclick="setUser('userB')" class="px-3 py-1.5 rounded-md font-semibold text-xs transition bg-slate-800 text-slate-300 hover:bg-slate-700">
+          userB (Viewer)
+        </button>
+      </div>
+    </div>
+
+    <!-- Alert Message -->
+    <div id="alertBox" class="hidden p-4 rounded-xl border font-medium flex justify-between items-center transition">
+      <span id="alertText"></span>
+      <button onclick="hideAlert()" class="text-xs opacity-75 hover:opacity-100 font-bold ml-4">Dismiss</button>
+    </div>
+
+    <!-- Upload Box -->
+    <div class="bg-slate-800 p-6 rounded-xl border border-slate-700 shadow-md">
+      <h2 class="text-base font-semibold text-slate-200 mb-3">
+        Upload Document <span id="uploadLabel" class="text-xs font-normal text-blue-400">(as userA)</span>
+      </h2>
+      <form id="uploadForm" class="flex flex-wrap gap-4 items-center">
+        <input type="file" id="fileInput" class="file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-blue-600 file:text-white hover:file:bg-blue-700 text-xs text-slate-400 cursor-pointer" required />
+        <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded-lg text-xs font-semibold transition">
+          Upload Securely
+        </button>
+      </form>
+    </div>
+
+    <!-- Documents Vault -->
+    <div class="bg-slate-800 rounded-xl border border-slate-700 shadow-md overflow-hidden">
+      <div class="p-5 border-b border-slate-700 flex justify-between items-center">
+        <h2 class="text-base font-semibold text-slate-200">Documents Vault</h2>
+        <button onclick="loadDocs()" class="text-xs text-blue-400 hover:underline">Refresh List</button>
+      </div>
+      <div id="docsList" class="divide-y divide-slate-700">
+        <p class="p-8 text-center text-slate-500 text-sm">Loading documents...</p>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    let currentUser = "userA";
+
+    function setUser(user) {
+      currentUser = user;
+      document.getElementById("btnUserA").className = user === "userA" ? "px-3 py-1.5 rounded-md font-semibold text-xs transition bg-blue-600 text-white shadow" : "px-3 py-1.5 rounded-md font-semibold text-xs transition bg-slate-800 text-slate-300 hover:bg-slate-700";
+      document.getElementById("btnUserB").className = user === "userB" ? "px-3 py-1.5 rounded-md font-semibold text-xs transition bg-purple-600 text-white shadow" : "px-3 py-1.5 rounded-md font-semibold text-xs transition bg-slate-800 text-slate-300 hover:bg-slate-700";
+      document.getElementById("uploadLabel").innerText = `(as ${user})`;
+      loadDocs();
+    }
+
+    function showAlert(text, type) {
+      const box = document.getElementById("alertBox");
+      const txt = document.getElementById("alertText");
+      txt.innerText = text;
+      box.className = type === "success" 
+        ? "p-4 rounded-xl border font-medium flex justify-between items-center transition bg-emerald-950/70 border-emerald-500 text-emerald-200"
+        : "p-4 rounded-xl border font-medium flex justify-between items-center transition bg-rose-950/70 border-rose-500 text-rose-200";
+      box.classList.remove("hidden");
+    }
+
+    function hideAlert() {
+      document.getElementById("alertBox").classList.add("hidden");
+    }
+
+    async function loadDocs() {
+      try {
+        const res = await fetch("/api/documents");
+        const docs = await res.json();
+        const list = document.getElementById("docsList");
+        if (!docs || docs.length === 0) {
+          list.innerHTML = `<p class="p-8 text-center text-slate-500 text-sm">No documents found. Upload a file above!</p>`;
+          return;
+        }
+        list.innerHTML = docs.map(doc => `
+          <div class="p-5 flex flex-col md:flex-row md:items-center justify-between gap-4 hover:bg-slate-750 transition">
+            <div>
+              <h3 class="font-semibold text-slate-100 text-sm">📄 ${doc.filename}</h3>
+              <p class="text-xs text-slate-400 mt-1">Owner: <span class="text-blue-400 font-medium">${doc.owner_id}</span> | ID: ${doc.document_id.slice(0, 8)}...</p>
+            </div>
+            <div class="flex flex-wrap items-center gap-3">
+              <button onclick="downloadDoc('${doc.document_id}', '${doc.filename}')" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-1.5 rounded-lg text-xs font-semibold transition">
+                ⬇ Download (as ${currentUser})
+              </button>
+              ${currentUser === doc.owner_id ? `
+                <div class="flex items-center gap-2 bg-slate-900 p-1.5 rounded-lg border border-slate-700">
+                  <input type="text" id="target_${doc.document_id}" value="userB" class="bg-transparent border-0 text-xs w-16 px-1 text-slate-200 focus:outline-none" />
+                  <button onclick="grantAccess('${doc.document_id}')" class="bg-blue-600 hover:bg-blue-500 text-white px-2.5 py-1 rounded text-xs font-medium transition">Grant</button>
+                  <button onclick="revokeAccess('${doc.document_id}')" class="bg-rose-600 hover:bg-rose-500 text-white px-2.5 py-1 rounded text-xs font-medium transition">Revoke</button>
+                </div>
+              ` : ''}
+            </div>
+          </div>
+        `).join("");
+      } catch (e) {
+        showAlert("Failed to load documents", "error");
+      }
+    }
+
+    document.getElementById("uploadForm").onsubmit = async (e) => {
+      e.preventDefault();
+      const file = document.getElementById("fileInput").files[0];
+      if (!file) return;
+      const formData = new FormData();
+      formData.append("file", file);
+      try {
+        const res = await fetch(`/api/documents/upload?owner_id=${currentUser}`, { method: "POST", body: formData });
+        const data = await res.json();
+        if (res.ok) {
+          showAlert(`File uploaded successfully! ID: ${data.document_id}`, "success");
+          document.getElementById("fileInput").value = "";
+          loadDocs();
+        } else {
+          showAlert(data.detail || "Upload failed", "error");
+        }
+      } catch {
+        showAlert("Upload request failed", "error");
+      }
+    };
+
+    async function downloadDoc(docId, filename) {
+      try {
+        const res = await fetch(`/api/documents/${docId}/download?current_user_id=${currentUser}`, { cache: "no-store" });
+        if (res.ok) {
+          const blob = await res.blob();
+          const url = window.URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = filename;
+          a.click();
+          showAlert(`Downloaded "${filename}" successfully as ${currentUser}`, "success");
+        } else {
+          const err = await res.json();
+          showAlert(`🚫 403 FORBIDDEN: ${err.detail}`, "error");
+        }
+      } catch {
+        showAlert("Download failed", "error");
+      }
+    }
+
+    async function grantAccess(docId) {
+      const target = document.getElementById(`target_${docId}`).value;
+      try {
+        const res = await fetch(`/api/documents/${docId}/permissions/grant?owner_id=${currentUser}&target_user_id=${target}`, { method: "POST" });
+        const data = await res.json();
+        if (res.ok) {
+          showAlert(data.message || `Permission GRANTED to ${target}`, "success");
+        } else {
+          showAlert(data.detail || "Failed to grant", "error");
+        }
+      } catch {
+        showAlert("Grant failed", "error");
+      }
+    }
+
+    async function revokeAccess(docId) {
+      const target = document.getElementById(`target_${docId}`).value;
+      try {
+        const res = await fetch(`/api/documents/${docId}/permissions/revoke?owner_id=${currentUser}&target_user_id=${target}`, { method: "POST" });
+        const data = await res.json();
+        if (res.ok) {
+          showAlert(data.message || `Access REVOKED for ${target} immediately`, "success");
+        } else {
+          showAlert(data.detail || "Failed to revoke", "error");
+        }
+      } catch {
+        showAlert("Revoke failed", "error");
+      }
+    }
+
+    loadDocs();
+  </script>
+</body>
+</html>
+"""
+
+# లింక్ ఓపెన్ చేయగానే డాష్‌బోర్డ్ వెబ్‌సైట్ ప్రత్యక్షమవుతుంది!
+@app.get("/", response_class=HTMLResponse)
 def home():
-    return {"message": "TrustVault API is running"}
+    return HTML_DASHBOARD
 
 @app.get("/api/documents")
 def list_documents(db: Session = Depends(get_db)):
@@ -152,7 +354,11 @@ def download_document(doc_id: str, current_user_id: str, db: Session = Depends(g
     return FileResponse(
         path=file_disk_path, 
         filename=doc.original_filename, 
-        media_type=doc.content_type
+        media_type=doc.content_type,
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache"
+        }
     )
 
 @app.post("/api/documents/{doc_id}/permissions/grant")
